@@ -6,12 +6,12 @@ import { Logger } from "@utils/Logger";
 let Native: PluginNative<typeof import("./native")>;
 const logger = new Logger("PlaynitePresence");
 
-const APP_ID = "1257819671114289184"; // Generic placeholder application ID
+const APP_ID = "0"; // Generic placeholder application ID
 
-const setActivity = (game: string | null) => { // game can be null to clear activity
-    logger.log(`Attempting to set activity to: ${game}`);
+const setActivity = (gameInfo: { title: string | null; appId?: string | null; } | null) => {
+    logger.log(`Attempting to set activity to: ${gameInfo?.title || "null"}`);
 
-    if (game === null) {
+    if (gameInfo === null || gameInfo.title === null) {
         FluxDispatcher.dispatch({
             type: "LOCAL_ACTIVITY_UPDATE",
             activity: null,
@@ -20,19 +20,21 @@ const setActivity = (game: string | null) => { // game can be null to clear acti
         return;
     }
 
+    const activity = {
+        name: gameInfo.title,
+        type: 0, // 0 for Playing
+        application_id: gameInfo.appId || APP_ID,
+    };
+
     FluxDispatcher.dispatch({
         type: "LOCAL_ACTIVITY_UPDATE",
-        activity: {
-            name: game,
-            type: 0, // 0 for Playing
-            application_id: APP_ID,
-        },
+        activity: activity,
     });
     logger.log("setActivity call completed.");
 };
 
-const handleSetActivity = (game: string) => {
-    setActivity(game);
+const handleSetActivity = (gameInfo: { title: string; appId?: string; }) => {
+    setActivity(gameInfo);
 };
 
 let isListening = false; // Flag to control the message listener loop
