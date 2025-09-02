@@ -8,10 +8,13 @@ const logger = new Logger("PlaynitePresence");
 
 const APP_ID = "0"; // Generic placeholder application ID
 
-const setActivity = (gameInfo: { title: string | null; appId?: string | null; } | null) => {
-    logger.log(`Attempting to set activity to: ${gameInfo?.title || "null"}`);
+let activityStack: { title: string; appId?: string | null; }[] = [];
 
-    if (gameInfo === null || gameInfo.title === null) {
+const updateActivity = () => {
+    const currentActivity = activityStack.length > 0 ? activityStack[activityStack.length - 1] : null;
+    logger.log(`Updating activity to: ${currentActivity?.title || "null"}`);
+
+    if (currentActivity === null) {
         FluxDispatcher.dispatch({
             type: "LOCAL_ACTIVITY_UPDATE",
             activity: null,
@@ -21,20 +24,49 @@ const setActivity = (gameInfo: { title: string | null; appId?: string | null; } 
     }
 
     const activity = {
-        name: gameInfo.title,
+        name: currentActivity.title,
         type: 0, // 0 for Playing
-        application_id: gameInfo.appId || APP_ID,
+        application_id: currentActivity.appId || APP_ID,
     };
 
     FluxDispatcher.dispatch({
         type: "LOCAL_ACTIVITY_UPDATE",
         activity: activity,
     });
-    logger.log("setActivity call completed.");
+    logger.log("setActivity call completed for:", currentActivity.title);
 };
 
 const handleSetActivity = (gameInfo: { title: string; appId?: string; }) => {
-    setActivity(gameInfo);
+    if (!gameInfo || !gameInfo.title) {
+        logger.log("Ignoring setActivity call with invalid gameInfo.");
+        return;
+    }
+    // Remove if it already exists to move it to the top
+    activityStack = activityStack.filter(g => g.title !== gameInfo.title);
+    activityStack.push(gameInfo);
+    updateActivity();
+};
+
+const handleClearActivity = (gameInfo: { title: string | null; }) => {
+    const titleToClear = gameInfo ? gameInfo.title : null;
+
+    if (titleToClear) {
+        const initialLength = activityStack.length;
+        activityStack = activityStack.filter(g => g.title !== titleToClear);
+        if (activityStack.length < initialLength) {
+            logger.log(`Removed ${titleToClear} from activity stack.`);
+            updateActivity();
+        } else {
+            logger.log(`Game ${titleToClear} not in stack, ignoring clear request.`);
+        }
+    } else {
+        // Legacy or blanket clear request, remove the most recent
+        if (activityStack.length > 0) {
+            const removedGame = activityStack.pop();
+            logger.log(`Removed ${removedGame?.title} (most recent) from activity stack.`);
+            updateActivity();
+        }
+    }
 };
 
 let isListening = false; // Flag to control the message listener loop
@@ -49,6 +81,8 @@ async function startMessageListener() {
                     logger.log(`Native: ${message.payload}`);
                 } else if (message.type === "setActivity") {
                     handleSetActivity(message.payload);
+                } else if (message.type === "clearActivity") {
+                    handleClearActivity(message.payload);
                 }
             }
             // If message is null, it means the long-poll timed out.
@@ -64,7 +98,7 @@ export default definePlugin({
     name: "Playnite Presence",
     description: "Sets Discord 'Playing' status via local webserver for Playnite.",
     authors: [{ name: "rech", id: 77106595514822656n }],
-    version: "1.0.0",
+    version: "1.1.1",
 
     start() {
         Native = (window as any).VencordNative.pluginHelpers["Playnite Presence"];
@@ -72,7 +106,7 @@ export default definePlugin({
         const initialPort = parseInt(Settings.plugins?.PlaynitePresence?.port ?? "3000", 10);
         Native.setPortAndRestartServer(initialPort);
 
-        logger.log("Plugin 1.0.0 started and server instructed to run.");
+        logger.log("Plugin 1.1.1 started and server instructed to run.");
 
         startMessageListener(); // Start the long-polling listener
     },
@@ -84,7 +118,8 @@ export default definePlugin({
         }
 
         // Use FluxDispatcher to clear activity on stop
-        setActivity(null);
+        activityStack = [];
+        updateActivity();
         logger.log("Plugin stopped and server instructed to shut down.");
     },
 

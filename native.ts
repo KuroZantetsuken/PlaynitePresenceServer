@@ -127,10 +127,18 @@ export async function startServer() {
               throw new Error("Missing 'title' property in /set-activity payload");
             }
           } else if (req.url === "/clear-activity") {
-            logger.log("Received clear activity request.");
-            sendMessageToRenderer("setActivity", null);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ status: "ok" }));
+            const data = body ? JSON.parse(body) : {};
+            if (data.title) {
+              logger.log(`Received clear activity for game: ${data.title}`);
+              sendMessageToRenderer("clearActivity", { title: data.title });
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ status: "ok" }));
+            } else {
+              logger.log("Received legacy clear activity request (no title). Clearing the most recent activity.");
+              sendMessageToRenderer("clearActivity", { title: null });
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ status: "ok", note: "Request had no title, cleared most recent activity." }));
+            }
           } else {
             res.writeHead(404, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Endpoint not found" }));
