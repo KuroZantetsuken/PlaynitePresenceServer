@@ -44,7 +44,8 @@ async function updateDetectableDatabase(): Promise<void> {
 
 async function findAppId({ exeName, gameTitle }: { exeName?: string; gameTitle?: string; }): Promise<string | null> {
   if (!existsSync(DB_PATH)) {
-    await updateDetectableDatabase();
+    logger.error("Detectable database not found! It should have been updated on startup.");
+    return null;
   }
 
   const db: Detectable[] = JSON.parse(readFileSync(DB_PATH, 'utf8'));
@@ -52,14 +53,51 @@ async function findAppId({ exeName, gameTitle }: { exeName?: string; gameTitle?:
 
   if (exeName) {
     const lowerExeName = exeName.toLowerCase();
-    foundApp = db.find(app =>
-      app.executables?.some(exe => exe.name.toLowerCase() === lowerExeName && exe.os === 'win32')
-    );
+    logger.log(`Searching for app with exe name: ${lowerExeName}`);
+    foundApp = db.find(app => {
+      const found = app.executables?.some(exe => {
+        const exeFileName = exe.name.split('/').pop()?.toLowerCase();
+        return exeFileName === lowerExeName && exe.os === 'win32';
+      });
+      if (found) {
+        logger.log(`Found a match by exe name: ${app.name} (ID: ${app.id})`);
+      }
+      return found;
+    });
   }
 
   if (!foundApp && gameTitle) {
     const lowerGameTitle = gameTitle.toLowerCase();
-    foundApp = db.find(app => app.name.toLowerCase() === lowerGameTitle);
+    logger.log(`Searching for app with game title: "${lowerGameTitle}"`);
+    foundApp = db.find(app => {
+      const appName = app.name.toLowerCase();
+      const found = appName === lowerGameTitle;
+      if (found) {
+        logger.log(`Found a match by game title: ${app.name} (ID: ${app.id})`);
+      }
+      return found;
+    });
+    if (!foundApp) {
+        logger.log(`No app found for gameTitle: "${gameTitle}"`);
+        const searchTitle = lowerGameTitle.replace(/[^a-z0-9]/g, '');
+        if (searchTitle) {
+            logger.log(`Searching again with simplified title: "${searchTitle}"`);
+            foundApp = db.find(app => {
+                const appName = app.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (!appName) return false;
+                logger.log(`Comparing with simplified: "${appName}"`);
+                const found = appName.includes(searchTitle) || searchTitle.includes(appName);
+                if (found) {
+                    logger.log(`Found a fuzzy match: ${app.name} (ID: ${app.id})`);
+                }
+                return found;
+            });
+        }
+    }
+  }
+
+  if (!foundApp) {
+    logger.log(`No app found for exeName: ${exeName} or gameTitle: ${gameTitle}`);
   }
 
   return foundApp ? foundApp.id : null;
@@ -190,4 +228,8 @@ export async function setPortAndRestartServer(_: IpcMainInvokeEvent, newPort: nu
     currentPort = newPort;
     startServer();
   }
+}
+
+export async function forceUpdateDatabase() {
+    await updateDetectableDatabase();
 }

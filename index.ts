@@ -103,6 +103,8 @@ export default definePlugin({
     start() {
         Native = (window as any).VencordNative.pluginHelpers["Playnite Presence"];
 
+        Native.forceUpdateDatabase();
+
         const initialPort = parseInt(Settings.plugins?.PlaynitePresence?.port ?? "3000", 10);
         Native.setPortAndRestartServer(initialPort);
 
