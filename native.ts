@@ -8,6 +8,7 @@ import { join } from "path";
 let server: http.Server;
 const logger = new Logger("PlaynitePresenceServer");
 let currentPort = 38271; // Default port, will be updated by settings
+let currentRunningGamesPath = "D:\\Scripts\\RunningGames.json"; // Default path
 
 let currentPromiseResolve: ((value: { type: string, payload: any; } | null) => void) | null = null;
 let currentPromiseReject: ((reason?: any) => void) | null = null;
@@ -78,21 +79,21 @@ async function findAppId({ exeName, gameTitle }: { exeName?: string; gameTitle?:
       return found;
     });
     if (!foundApp) {
-        logger.log(`No app found for gameTitle: "${gameTitle}"`);
-        const searchTitle = lowerGameTitle.replace(/[^a-z0-9]/g, '');
-        if (searchTitle) {
-            logger.log(`Searching again with simplified title: "${searchTitle}"`);
-            foundApp = db.find(app => {
-                const appName = app.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (!appName) return false;
-                logger.log(`Comparing with simplified: "${appName}"`);
-                const found = appName.includes(searchTitle) || searchTitle.includes(appName);
-                if (found) {
-                    logger.log(`Found a fuzzy match: ${app.name} (ID: ${app.id})`);
-                }
-                return found;
-            });
-        }
+      logger.log(`No app found for gameTitle: "${gameTitle}"`);
+      const searchTitle = lowerGameTitle.replace(/[^a-z0-9]/g, '');
+      if (searchTitle) {
+        logger.log(`Searching again with simplified title: "${searchTitle}"`);
+        foundApp = db.find(app => {
+          const appName = app.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!appName) return false;
+          logger.log(`Comparing with simplified: "${appName}"`);
+          const found = appName.includes(searchTitle) || searchTitle.includes(appName);
+          if (found) {
+            logger.log(`Found a fuzzy match: ${app.name} (ID: ${app.id})`);
+          }
+          return found;
+        });
+      }
     }
   }
 
@@ -152,31 +153,43 @@ export async function startServer() {
       });
       req.on("end", async () => {
         try {
-          if (req.url === "/set-activity") {
-            const data = JSON.parse(body);
-            if (data.title !== undefined) {
-              logger.log(`Received game: ${data.title}, exe: ${data.exeName}`);
-              const appId = await findAppId({ exeName: data.exeName, gameTitle: data.title });
-              logger.log(`Found app ID: ${appId}`);
-              sendMessageToRenderer("setActivity", { title: data.title, appId: appId });
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ status: "ok", appId: appId }));
-            } else {
-              throw new Error("Missing 'title' property in /set-activity payload");
+          if (req.url === "/sync-activity") {
+            try {
+              const RUNNING_GAMES_PATH = currentRunningGamesPath;
+              let runningGames: any[] = [];
+              if (existsSync(RUNNING_GAMES_PATH)) {
+                let content = readFileSync(RUNNING_GAMES_PATH, "utf8");
+                if (content.charCodeAt(0) === 0xFEFF) {
+                  content = content.slice(1);
+                }
+                if (content.trim()) {
+                  runningGames = JSON.parse(content);
+                }
+              }
+
+              if (runningGames.length > 0) {
+                const lastGame = runningGames[runningGames.length - 1];
+                logger.log(`Syncing activity for game: ${lastGame.Title}, exe: ${lastGame.ExeName}`);
+                const appId = await findAppId({ exeName: lastGame.ExeName, gameTitle: lastGame.Title });
+                logger.log(`Found app ID: ${appId}`);
+                sendMessageToRenderer("setActivity", { title: lastGame.Title, appId: appId });
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ status: "ok", appId: appId }));
+              } else {
+                logger.log("No running games found in JSON. Clearing activity.");
+                sendMessageToRenderer("clearActivity", { title: null });
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ status: "ok", note: "Cleared activity" }));
+              }
+            } catch (err) {
+              logger.error(`Error syncing activity: ${err}`);
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "Internal server error" }));
             }
-          } else if (req.url === "/clear-activity") {
-            const data = body ? JSON.parse(body) : {};
-            if (data.title) {
-              logger.log(`Received clear activity for game: ${data.title}`);
-              sendMessageToRenderer("clearActivity", { title: data.title });
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ status: "ok" }));
-            } else {
-              logger.log("Received legacy clear activity request (no title). Clearing the most recent activity.");
-              sendMessageToRenderer("clearActivity", { title: null });
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ status: "ok", note: "Request had no title, cleared most recent activity." }));
-            }
+          } else if (req.url === "/set-activity" || req.url === "/clear-activity") {
+            // Legacy endpoints redirect to sync
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "ok", note: "Legacy endpoint ignored, please use /sync-activity" }));
           } else {
             res.writeHead(404, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Endpoint not found" }));
@@ -230,6 +243,11 @@ export async function setPortAndRestartServer(_: IpcMainInvokeEvent, newPort: nu
   }
 }
 
+export async function setRunningGamesPath(_: IpcMainInvokeEvent, newPath: string) {
+  logger.log(`Attempting to change running games path to ${newPath}.`);
+  currentRunningGamesPath = newPath;
+}
+
 export async function forceUpdateDatabase() {
-    await updateDetectableDatabase();
+  await updateDetectableDatabase();
 }
