@@ -41,32 +41,14 @@ const handleSetActivity = (gameInfo: { title: string; appId?: string; }) => {
         logger.log("Ignoring setActivity call with invalid gameInfo.");
         return;
     }
-    // Remove if it already exists to move it to the top
-    activityStack = activityStack.filter(g => g.title !== gameInfo.title);
-    activityStack.push(gameInfo);
+    // Trust the server's state completely
+    activityStack = [gameInfo];
     updateActivity();
 };
 
-const handleClearActivity = (gameInfo: { title: string | null; }) => {
-    const titleToClear = gameInfo ? gameInfo.title : null;
-
-    if (titleToClear) {
-        const initialLength = activityStack.length;
-        activityStack = activityStack.filter(g => g.title !== titleToClear);
-        if (activityStack.length < initialLength) {
-            logger.log(`Removed ${titleToClear} from activity stack.`);
-            updateActivity();
-        } else {
-            logger.log(`Game ${titleToClear} not in stack, ignoring clear request.`);
-        }
-    } else {
-        // Legacy or blanket clear request, remove the most recent
-        if (activityStack.length > 0) {
-            const removedGame = activityStack.pop();
-            logger.log(`Removed ${removedGame?.title} (most recent) from activity stack.`);
-            updateActivity();
-        }
-    }
+const handleClearActivity = () => {
+    activityStack = [];
+    updateActivity();
 };
 
 let isListening = false; // Flag to control the message listener loop
@@ -82,7 +64,7 @@ async function startMessageListener() {
                 } else if (message.type === "setActivity") {
                     handleSetActivity(message.payload);
                 } else if (message.type === "clearActivity") {
-                    handleClearActivity(message.payload);
+                    handleClearActivity();
                 }
             }
             // If message is null, it means the long-poll timed out.
@@ -95,17 +77,20 @@ async function startMessageListener() {
 }
 
 export default definePlugin({
-    name: "Playnite Presence",
+    name: "PlaynitePresence",
     description: "Sets Discord 'Playing' status via local webserver for Playnite.",
     authors: [{ name: "rech", id: 77106595514822656n }],
     version: "1.1.1",
 
     start() {
-        Native = (window as any).VencordNative.pluginHelpers["Playnite Presence"];
+        Native = (window as any).VencordNative.pluginHelpers["PlaynitePresence"];
 
         Native.forceUpdateDatabase();
 
         const initialPort = parseInt(Settings.plugins?.PlaynitePresence?.port ?? "3000", 10);
+        const initialPath = Settings.plugins?.PlaynitePresence?.runningGamesPath ?? "D:\\Scripts\\RunningGames.json";
+
+        Native.setRunningGamesPath(initialPath);
         Native.setPortAndRestartServer(initialPort);
 
         logger.log("Plugin 1.1.1 started and server instructed to run.");
@@ -138,6 +123,15 @@ export default definePlugin({
                 } else {
                     logger.error(`Invalid port number: ${value}`);
                 }
+            }
+        },
+        runningGamesPath: {
+            description: "Path to the RunningGames.json file",
+            type: OptionType.STRING,
+            default: "D:\\Scripts\\RunningGames.json",
+            placeholder: "e.g., D:\\Scripts\\RunningGames.json",
+            onChange: (value: string) => {
+                Native.setRunningGamesPath(value);
             }
         }
     }
